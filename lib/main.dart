@@ -1,9 +1,16 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_archive/flutter_archive.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:mcumgr_flutter/mcumgr_flutter.dart' as mcumgr;
+import 'package:path_provider/path_provider.dart' as path_provider;
+import 'package:test_dfu/models/manifest.dart';
+import 'package:uuid/uuid.dart';
 
 const deviceId = "0CE69D88-E116-A5FB-2F0C-54DF0807B3D1";
 
@@ -55,26 +62,21 @@ class _MyHomePageState extends State<MyHomePage> {
             children: [
               Text('OTA app update'),
               ElevatedButton(
-                onPressed:
-                    !_isConnected
-                        ? null
-                        : () async {
-                          print("Button pressed!");
-                          update();
-                        },
+                onPressed: () async {
+                  update();
+                },
                 child: Text('Update'),
               ),
-              ElevatedButton(
-                child: Text(!_isConnected ? "Connect" : "Disconnect"),
-                onPressed: () async {
-                  print("Connect/Disconnect!");
-                  if (!_isConnected) {
-                    listDevices(); // connects to the provided device
-                  } else {
-                    disconnect();
-                  }
-                },
-              ),
+              // ElevatedButton(
+              //   child: Text(!_isConnected ? "Connect" : "Disconnect"),
+              //   onPressed: () async {
+              //     if (!_isConnected) {
+              //       listDevices(); // connects to the provided device
+              //     } else {
+              //       disconnect();
+              //     }
+              //   },
+              // ),
             ],
           ),
         ),
@@ -98,18 +100,26 @@ class _MyHomePageState extends State<MyHomePage> {
 
       print("1.1");
 
-      final data = await rootBundle.load('assets/dfu_green_flash.zip');
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['zip', 'bin'],
+      );
 
-      print("1.2");
+      if (result == null || result.files.isEmpty) {
+        print("ERROR: Has to select atleast one file");
+        return;
+      }
 
-      final flashFileContents = data.buffer.asUint8List();
+      final file = result.files.first;
+
+      // file.bytes;
+      final flashFileContents = await File(file.path!).readAsBytes();
 
       print("2 fetched file contents ${flashFileContents.length}");
 
-      List<mcumgr.Image> firmwareImages = [];
+      var firmwareImages = await getFiles(flashFileContents);
 
-      final image = mcumgr.Image(image: 0, data: flashFileContents);
-      firmwareImages.add(image);
+      print("2");
 
       updateManager.update(firmwareImages);
 
@@ -143,91 +153,144 @@ class _MyHomePageState extends State<MyHomePage> {
     }
   }
 
-  void listDevices() async {
-    FlutterBluePlus.setLogLevel(LogLevel.none);
-    FlutterBluePlus.setOptions(restoreState: true);
+  // void listDevices() async {
+  //   FlutterBluePlus.setLogLevel(LogLevel.none);
+  //   FlutterBluePlus.setOptions(restoreState: true);
 
-    BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
+  //   BluetoothAdapterState _adapterState = BluetoothAdapterState.unknown;
 
-    // late StreamSubscription<BluetoothAdapterState>
-    // _adapterStateStateSubscription;
+  //   // late StreamSubscription<BluetoothAdapterState>
+  //   // _adapterStateStateSubscription;
 
+  //   try {
+  //     // Check bluetooth adapter state
+  //     _adapterState = await FlutterBluePlus.adapterState.first;
+
+  //     _adapterStateSubscription = FlutterBluePlus.adapterState.listen((
+  //       state,
+  //     ) async {
+  //       if (state == BluetoothAdapterState.on) {
+  //         await FlutterBluePlus.stopScan();
+
+  //         // Start scanning
+  //         _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+  //           // print("Scan results: $results, $deviceId");
+  //           for (ScanResult r in results) {
+  //             if (r.device.platformName.isEmpty) continue;
+  //             // print("${r.device.platformName} and $deviceId");
+  //             if (r.device.platformName.contains(deviceName)) {
+  //               connect(r.device);
+  //               return;
+  //             }
+  //           }
+  //         });
+
+  //         await FlutterBluePlus.startScan(
+  //           timeout: const Duration(seconds: 300),
+  //           androidUsesFineLocation: false,
+  //         );
+  //       }
+  //     });
+  //   } catch (e) {
+  //     print('Error initializing Bluetooth: $e');
+  //   }
+  // }
+
+  // Future<bool> connect(BluetoothDevice peripheral) async {
+  //   try {
+  //     // Cancel scanning
+  //     await FlutterBluePlus.stopScan();
+  //     await _scanSubscription?.cancel();
+
+  //     // Connect to device
+  //     await peripheral.connect(
+  //       timeout: const Duration(seconds: 4),
+  //       autoConnect: false,
+  //     );
+
+  //     _peripheral = peripheral;
+
+  //     setState(() {
+  //       _isConnected = true;
+  //     });
+  //   } catch (e) {
+  //     print('Failed to connect: $e');
+  //     // handleDisconnect();
+  //     return false;
+  //   }
+
+  //   return true;
+  // }
+
+  // Future<void> disconnect() async {
+  //   setState(() {
+  //     _isConnected = false;
+  //   });
+
+  //   try {
+  //     await _adapterStateSubscription?.cancel();
+  //     await _scanSubscription?.cancel();
+
+  //     await FlutterBluePlus.stopScan();
+
+  //     if (_peripheral != null) {
+  //       await _peripheral!.disconnect();
+  //     }
+  //   } catch (e) {
+  //     print("Error cancelling subscriptions: $e");
+  //   }
+  // }
+
+  Future<List<mcumgr.Image>> getFiles(Uint8List fileContent) async {
+    final prefix = 'firmware_${Uuid().v4()}';
+    final systemTempDir = await path_provider.getTemporaryDirectory();
+
+    final tempDir = Directory('${systemTempDir.path}/$prefix');
+    await tempDir.create();
+
+    final firmwareFileData = fileContent;
+    final firmwareFile = File('${tempDir.path}/firmware.zip');
+    await firmwareFile.writeAsBytes(firmwareFileData);
+
+    final destinationDir = Directory('${tempDir.path}/firmware');
+    await destinationDir.create();
     try {
-      // Check bluetooth adapter state
-      _adapterState = await FlutterBluePlus.adapterState.first;
-
-      _adapterStateSubscription = FlutterBluePlus.adapterState.listen((
-        state,
-      ) async {
-        if (state == BluetoothAdapterState.on) {
-          await FlutterBluePlus.stopScan();
-
-          // Start scanning
-          _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-            // print("Scan results: $results, $deviceId");
-            for (ScanResult r in results) {
-              if (r.device.platformName.isEmpty) continue;
-              // print("${r.device.platformName} and $deviceId");
-              if (r.device.platformName.contains(deviceName)) {
-                connect(r.device);
-                return;
-              }
-            }
-          });
-
-          await FlutterBluePlus.startScan(
-            timeout: const Duration(seconds: 300),
-            androidUsesFineLocation: false,
-          );
-        }
-      });
-    } catch (e) {
-      print('Error initializing Bluetooth: $e');
-    }
-  }
-
-  Future<bool> connect(BluetoothDevice peripheral) async {
-    try {
-      // Cancel scanning
-      await FlutterBluePlus.stopScan();
-      await _scanSubscription?.cancel();
-
-      // Connect to device
-      await peripheral.connect(
-        timeout: const Duration(seconds: 4),
-        autoConnect: false,
+      await ZipFile.extractToDirectory(
+        zipFile: firmwareFile,
+        destinationDir: destinationDir,
       );
-
-      _peripheral = peripheral;
-
-      setState(() {
-        _isConnected = true;
-      });
     } catch (e) {
-      print('Failed to connect: $e');
-      // handleDisconnect();
-      return false;
+      throw Exception('Failed to unzip firmware');
     }
 
-    return true;
-  }
+    // read manifest.json
+    final manifestFile = File('${destinationDir.path}/manifest.json');
+    final manifestString = await manifestFile.readAsString();
+    Map<String, dynamic> manifestJson = json.decode(manifestString);
+    Manifest manifest;
 
-  Future<void> disconnect() async {
-    setState(() {
-      _isConnected = false;
-    });
+    print(manifestJson);
 
     try {
-      await _adapterStateSubscription?.cancel();
-      await _scanSubscription?.cancel();
-
-      await FlutterBluePlus.stopScan();
-
-      if (_peripheral != null) {
-        await _peripheral!.disconnect();
-      }
+      manifest = Manifest.fromJson(manifestJson);
     } catch (e) {
-      print("Error cancelling subscriptions: $e");
+      throw Exception('Failed to parse manifest.json');
     }
+
+    List<mcumgr.Image> firmwareImages = [];
+    for (final file in manifest.files) {
+      final firmwareFile = File('${destinationDir.path}/${file.file}');
+      final firmwareFileData = await firmwareFile.readAsBytes();
+      final image = mcumgr.Image(image: file.image, data: firmwareFileData);
+
+      print("OOOO: ${firmwareFileData.length}");
+
+      firmwareImages.add(image);
+    }
+
+    // delete tempDir
+    await tempDir.delete(recursive: true);
+
+    return firmwareImages;
   }
 }
