@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,8 +6,6 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:mcumgr_flutter/mcumgr_flutter.dart' as mcumgr;
 
 const deviceId = "0CE69D88-E116-A5FB-2F0C-54DF0807B3D1";
-
-// 0CE69D88-E116-A5FB-2F0C-54DF0807B3D1
 
 const deviceName = "Nocturnal_DFU_Test";
 
@@ -58,10 +55,13 @@ class _MyHomePageState extends State<MyHomePage> {
             children: [
               Text('OTA app update'),
               ElevatedButton(
-                onPressed: () async {
-                  print("Button pressed!");
-                  update();
-                },
+                onPressed:
+                    !_isConnected
+                        ? null
+                        : () async {
+                          print("Button pressed!");
+                          update();
+                        },
                 child: Text('Update'),
               ),
               ElevatedButton(
@@ -69,7 +69,7 @@ class _MyHomePageState extends State<MyHomePage> {
                 onPressed: () async {
                   print("Connect/Disconnect!");
                   if (!_isConnected) {
-                    listDevices(); // lists and connects
+                    listDevices(); // connects to the provided device
                   } else {
                     disconnect();
                   }
@@ -83,60 +83,64 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void update() async {
-    print("0.1");
+    try {
+      print("0.1");
 
-    final managerFactory = mcumgr.FirmwareUpdateManagerFactory();
+      final managerFactory = mcumgr.FirmwareUpdateManagerFactory();
 
-    print("0.2");
+      print("0.2");
 
-    final updateManager = await managerFactory.getUpdateManager(deviceId);
+      final updateManager = await managerFactory.getUpdateManager(deviceId);
 
-    print("1 $deviceId");
+      print("1 $deviceId");
 
-    updateManager.setup();
+      updateManager.setup();
 
-    print("1.1");
+      print("1.1");
 
-    final data = await rootBundle.load('assets/dfu_green_flash.zip');
+      final data = await rootBundle.load('assets/dfu_green_flash.zip');
 
-    print("1.2");
+      print("1.2");
 
-    final flashFileContents = data.buffer.asUint8List();
+      final flashFileContents = data.buffer.asUint8List();
 
-    print("2 fetched file contents ${flashFileContents.length}");
+      print("2 fetched file contents ${flashFileContents.length}");
 
-    List<mcumgr.Image> firmwareImages = [];
+      List<mcumgr.Image> firmwareImages = [];
 
-    final image = mcumgr.Image(image: 0, data: flashFileContents);
-    firmwareImages.add(image);
+      final image = mcumgr.Image(image: 0, data: flashFileContents);
+      firmwareImages.add(image);
 
-    updateManager.update(firmwareImages);
+      updateManager.update(firmwareImages);
 
-    print("2.1 update started");
+      print("2.1 update started");
 
-    updateManager.updateStateStream?.listen((event) {
-      if (event == mcumgr.FirmwareUpgradeState.success) {
-        print("Update Success");
-      } else {
-        print(event);
-      }
-    });
+      updateManager.updateStateStream?.listen((event) {
+        if (event == mcumgr.FirmwareUpgradeState.success) {
+          print("Update Success");
+        } else {
+          print(event);
+        }
+      });
 
-    print("3 in between streams");
+      print("3 in between streams");
 
-    updateManager.progressStream.listen((event) {
-      print("${event.bytesSent} / ${event.imageSize}} bytes sent");
-    });
+      updateManager.progressStream.listen((event) {
+        print("${event.bytesSent} / ${event.imageSize}} bytes sent");
+      });
 
-    print("4 in between streams 2");
+      print("4 in between streams 2");
 
-    updateManager.logger.logMessageStream
-        .where((log) => log.level.rawValue > 1) // filter out debug messages
-        .listen((log) {
-          print(log.message);
-        });
+      updateManager.logger.logMessageStream
+          .where((log) => log.level.rawValue > 1) // filter out debug messages
+          .listen((log) {
+            print(log.message);
+          });
 
-    print("5 subscribed to all streams");
+      print("5 subscribed to all streams");
+    } catch (e) {
+      print(e);
+    }
   }
 
   void listDevices() async {
@@ -199,37 +203,6 @@ class _MyHomePageState extends State<MyHomePage> {
       setState(() {
         _isConnected = true;
       });
-
-      // Discover services
-      List<BluetoothService> services = await peripheral.discoverServices();
-      for (BluetoothService service in services) {
-        for (BluetoothCharacteristic characteristic
-            in service.characteristics) {
-          // Check for the write property
-          // if (characteristic.properties.write) {
-          //   sendCharacteristic = characteristic;
-          //   _loadedService = true;
-          // }
-
-          // Check for and set up notifications
-          // if (characteristic.properties.notify) {
-          //   _characteristicSubscriptions.add(
-          //     characteristic.onValueReceived.listen(
-          //       (value) => _handleCharacteristicValue(characteristic, value),
-          //       onError: (error) => {false},
-          //     ),
-          //   );
-          //   await characteristic.setNotifyValue(true);
-          // }
-        }
-      }
-
-      // Listen for disconnection
-      // peripheral.connectionState.listen((BluetoothConnectionState state) {
-      //   if (state == BluetoothConnectionState.disconnected) {
-      //     handleDisconnect();
-      //   }
-      // });
     } catch (e) {
       print('Failed to connect: $e');
       // handleDisconnect();
@@ -245,9 +218,6 @@ class _MyHomePageState extends State<MyHomePage> {
     });
 
     try {
-      // for (var characterstic in _characteristicSubscriptions) {
-      //   await characterstic.cancel();
-      // }
       await _adapterStateSubscription?.cancel();
       await _scanSubscription?.cancel();
 
