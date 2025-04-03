@@ -147,8 +147,6 @@ class _MyHomePageState extends State<MyHomePage> {
     Map<String, dynamic> manifestJson = json.decode(manifestString);
     Manifest manifest;
 
-    print(manifestJson);
-
     try {
       manifest = Manifest.fromJson(manifestJson);
     } catch (e) {
@@ -160,8 +158,6 @@ class _MyHomePageState extends State<MyHomePage> {
       final firmwareFile = File('${destinationDir.path}/${file.file}');
       final firmwareFileData = await firmwareFile.readAsBytes();
       final image = mcumgr.Image(image: file.image, data: firmwareFileData);
-
-      print("OOOO: ${firmwareFileData.length}");
 
       firmwareImages.add(image);
     }
